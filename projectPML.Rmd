@@ -1,0 +1,87 @@
+---
+title: "Human Activity Recognition"
+author: "clollett"
+date: "Wednesday, October 22, 2014"
+output: html_document
+---
+## Introduction
+
+## Data Exploration
+Database used is a subset of the Weight Lifting Exercise database. It consists of 19622 training and 20 testing records. Each record contain 160 variables. The outcome variable is Classe, which categories activities in 5 represented by letters A,B,C,D and E. 
+
+1) First step adquisition:
+
+```{r,cache=TRUE}
+library(RCurl)
+setInternet2(use = TRUE)
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",destfile="pml-training.csv")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",destfile="pml-testing.csv")
+pmltraining=read.csv("pml-training.csv")
+pmltesting=read.csv("pml-testing.csv")
+```
+2) Extracting target data
+
+```{r,cache=TRUE}
+target_data <- as.data.frame(pmltraining[,160])
+names(target_data) <- "Classe"
+
+```
+
+
+3) Cleaning Data of columns NA columns. It also take care of first 7 columns which are labels for the experimental protocol:
+
+```{r,cache=TRUE}
+pmltraining=pmltraining[,colSums(is.na(pmltraining)) < 0.001*nrow(pmltraining)]
+pmltesting=pmltesting[,colSums(is.na(pmltesting)) < 0.001*nrow(pmltesting)]
+pmltesting <- pmltesting[,8:59]
+testing_feat_names <- names(pmltesting)
+pmltraining <- pmltraining[ , which(names(pmltraining) %in% testing_feat_names)]
+```
+4) After cleaning the data, both datasets have 52 variables. Considering the number of variables involved and the lack of theoretical information. Therefore, a principal component analysis was performed to get better features. Studying the number of components for different variance thresholds:
+
+```{r,cache=TRUE}
+library(caret)
+plot(seq(0.5,0.95,by=0.05),sapply(seq(0.5,0.95,by=0.05),function(x) preProcess(pmltraining,method="pca",thres=x)$numComp),main="Number of Predictors vs. Variance Threshold",xlab="Variance Threshold",ylab="# Predictors")
+
+```
+
+From the graph it can be noticed that the required number of components incrementing for 0.5 difference in variance threshold accelerates at 0.8. Therefore, it was decided to keep the analysis to a variance threshold of 0.8 that gives 12 components. At this point I create a partition for a subtraining set and a validation set
+
+```{r,cache=TRUE}
+library(caret)
+preProc=preProcess(pmltraining,method="pca",thres=0.8)
+trainPC <- predict(preProc,pmltraining)
+testPC <- predict(preProc,pmltesting)
+set.seed(1970)
+inTrain <- createDataPartition(target_data$Classe,p=0.9,list=FALSE)
+trainPCTr <- trainPC[inTrain,]
+target_dataTr <- target_data[inTrain,]
+trainPCTs <- trainPC[-inTrain,]
+target_dataTs <- target_data[-inTrain,]
+```
+
+The technique known as Random Forest was selected because its versatility and the addition of the Out of Bagging error that gives a better guide. However, since it was of interest obtainig an estimate of out of sample error a 5-fold analysis was done using the function rcvf in order to observe cross-validation error estimation for the predictors used and less.
+
+```{r,cache=TRUE}
+library(randomForest)
+randomForestAnalysis <- rfcv(trainPCTr,target_dataTr)
+randomForestAnalysis$error.cv
+```
+
+Since the error rate is low and a high number of predictors tend to degrade random forest performance. The 12 predictor random forest model is created from the training set.
+
+```{r,eval=TRUE}
+library(randomForest)
+mdlRF12vars <- randomForest(target_dataTr ~ ., data=trainPCTr, importance=TRUE,proximity=TRUE)
+mdlRF12vars
+```
+
+The out of bang error is different from the out of sample error and it has to do with a unique characteristic of random forest. Now, the validation set is used to estimate the out of sample error(1-Accuracy)
+
+```{r,eval=TRUE}
+library(caret)
+confusionMatrix(target_dataTs,predict(mdlRF12vars,trainPCTs))
+```
+
+
+After this write-up. In the assignment testing the model will be used to classify the samples in the actual testing set
